@@ -160,31 +160,30 @@ const uint8_t encoded_ops[] = {
 };
 
 /* Generate query profile rearrange query sequence & calculate the weight of match/mismatch. */
-static __m128i* qP_byte (const int8_t* read_num,
-				  const int8_t* mat,
-				  const int32_t readLen,
-				  const int32_t n,	/* the edge length of the squre matrix mat */
-				  uint8_t bias) {
+static __m128i *qP_byte_optimized(const int8_t *read_num, const int8_t *mat,
+                                  const int32_t readLen, const int32_t n,
+                                  uint8_t bias) {
 
-	int32_t segLen = (readLen + 15) / 16; /* Split the 128 bit register into 16 pieces.
-								     Each piece is 8 bit. Split the read into 16 segments.
-								     Calculat 16 segments in parallel.
-								   */
-	__m128i* vProfile = (__m128i*)malloc(n * segLen * sizeof(__m128i));
-	int8_t* t = (int8_t*)vProfile;
-	int32_t nt, i, j, segNum;
+  const int32_t segLen = (readLen + 15) / 16;
+  __m128i *vProfile = (__m128i *)_mm_malloc(n * segLen * sizeof(__m128i), 16);
 
-	/* Generate query profile rearrange query sequence & calculate the weight of match/mismatch */
-	for (nt = 0; LIKELY(nt < n); nt ++) {
-		for (i = 0; i < segLen; i ++) {
-			j = i;
-			for (segNum = 0; LIKELY(segNum < 16) ; segNum ++) {
-				*t++ = j>= readLen ? bias : mat[nt * n + read_num[j]] + bias;
-				j += segLen;
-			}
-		}
-	}
-	return vProfile;
+#pragma omp parallel for schedule(static)
+  for (int32_t nt = 0; nt < n; nt++) {
+    int8_t *t = (int8_t *)(vProfile + nt * segLen);
+    for (int32_t i = 0; i < segLen; i++) {
+      int32_t j = i;
+      __m128i v_profile = _mm_setzero_si128();
+
+      for (int32_t segNum = 0; segNum < 16; segNum++) {
+        int8_t value = j >= readLen ? bias : mat[nt * n + read_num[j]] + bias;
+        ((int8_t *)&v_profile)[segNum] = value;
+        j += segLen;
+      }
+      _mm_store_si128((__m128i *)(t + i * 16), v_profile);
+    }
+  }
+
+  return vProfile;
 }
 
 /* Striped Smith-Waterman
