@@ -339,15 +339,33 @@ end:
 	}
 
 	/* Trace the alignment ending position on read. */
-	uint8_t *t = (uint8_t*)pvHmax;
-	int32_t column_len = segLen * 16;
-	for (i = 0; LIKELY(i < column_len); ++i, ++t) {
-		int32_t temp;
-		if (*t == max) {
-			temp = i / 16 + i % 16 * segLen;
-			if (temp < end_read) end_read = temp;
-		}
-	}
+	  {
+    __m128i vMax = _mm_set1_epi8((char)max);
+    int32_t column_len = segLen * 16;
+    int32_t i;
+    for (i = 0; i <= column_len - 16; i += 16) {
+      __m128i vData = _mm_loadu_si128((__m128i *)((uint8_t *)pvHmax + i));
+      __m128i vCmp = _mm_cmpeq_epi8(vData, vMax); 
+      int mask = _mm_movemask_epi8(vCmp);         
+      while (mask) {
+        int bitpos =
+            __builtin_ctz(mask);
+        int idx = i + bitpos;
+        int32_t temp = (idx / 16) + (idx % 16) * segLen;
+        if (temp < end_read)
+          end_read = temp;
+        mask &= (mask - 1); 
+      }
+    }
+    for (; i < column_len; ++i) {
+      uint8_t val = ((uint8_t *)pvHmax)[i];
+      if (val == max) {
+        int32_t temp = (i / 16) + (i % 16) * segLen;
+        if (temp < end_read)
+          end_read = temp;
+      }
+    }
+  }
 
 	free(pvHmax);
 	free(pvE);
